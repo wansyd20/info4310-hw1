@@ -1,0 +1,315 @@
+<html>
+<head>
+  <title>INFO 4310 - HW 1</title>
+  
+  
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://d3js.org/topojson.v3.min.js"></script>
+  
+  <style>
+      .gridlines line {
+        stroke: #bbb;
+      }
+
+      .gridlines .domain {
+        stroke: none;
+      }
+
+      .park {
+        fill: gray;
+        stroke: white;
+        stroke-width: 1px;
+      }
+      .neighborhood {
+        fill: #e2e2e2;
+        stroke: white;
+        stroke-width: 1px;
+      }
+
+      .zipcode {
+        fill: black;
+        stroke: white;
+        stroke-width: 1px;
+      }
+      
+      body {
+        font-family: "Trebuchet MS", sans-serif;
+      }
+
+      #charts {
+        display: flex;
+        
+      }
+       
+  </style>
+  
+</head>
+<body>
+  <div id="container">
+    <h3>Homework 1</h3>  
+    <h4>Top 4 Tree Species in San Francisco in Relation to Public Parks</h4>  
+      <p>This map aims to identifiy if a certain type of popular tree species is most prevalent near
+        public parks. Additionally, it examines if wider trees (thus older) are closer to parks in San
+        Francisco.
+      </p>
+      <div id = "charts">
+        <svg id="sf" height="550" width="500", style = "margin-right: 100px; border:1px solid black;">
+
+        </svg>   
+        <svg id = "barchart" height = "400" width = "600", style = "border:1px solid black;"></svg>
+
+      </div>
+  
+    
+    <script>
+    
+      const svg = d3.select("#sf");
+      const width = svg.attr("width");
+      const height = svg.attr("height");
+      const margin = { top: 20, right: 20, bottom: 20, left:20};
+      const mapWidth = width - margin.left - margin.right;
+      const mapHeight = height - margin.top - margin.bottom;
+      const map = svg.append("g")
+                      .attr("transform","translate("+margin.left+","+margin.top+")");
+
+      const legend = d3.select("#legend").append("g");
+
+      const requestData = async function() {
+        
+        const sf = await d3.json("SF-Neighborhoods.geo.json");
+        console.log(sf);
+        
+        var neighborhoods = topojson.feature(sf, sf.objects.SFNeighborhoods);
+  
+        var projection = d3.geoMercator().fitSize([mapWidth, mapHeight + 30], neighborhoods);
+        var path = d3.geoPath().projection(projection);
+
+        map.selectAll("path.neighborhood").data(neighborhoods.features)
+          .join("path")
+          .attr("class", "neighborhood")
+          .attr("d", path);
+
+        const parkData = await d3.json("park-data.geojson", d3.autoType);
+        console.log(parkData);
+            
+      
+        const colorScale = d3.scaleOrdinal(d3.schemeDark2);
+        const trees = await d3.csv("Street_Tree_List-2022-01-30_FILTERED.csv", d3.autoType);
+
+        var keys = ["Lophostemon confertus :: Brisbane Box", "Tristaniopsis laurina :: Swamp Myrtle",
+                    "Arbutus 'Marina' :: Hybrid Strawberry Tree", "Magnolia grandiflora :: Southern Magnolia"];
+
+        var trees_filtered = trees.filter(function(d) {
+          return (d["qSpecies"] === keys[0] || 
+                  d["qSpecies"] === keys[1]||
+                  d["qSpecies"] === keys[2] ||
+                  d["qSpecies"] === keys[3])
+        })
+        const sizeScale = d3.scaleLinear().domain(d3.extent(trees_filtered, d => d.DBH)).range([1, 15]);
+
+        trees_filtered.forEach( d => {
+          d.Position = projection( [d.Longitude, d.Latitude] );          
+        });
+
+        map.selectAll("circle").data(trees_filtered)
+           .join("circle")
+           .attr("r", d => sizeScale(d.DBH))
+           .attr("fill", d => colorScale(d.qSpecies))
+           .attr("opacity", 0.6)
+           .attr("cx", d => d.Position[0])
+           .attr("cy", d => d.Position[1]);
+
+        
+        map.selectAll("path.park").data(parkData.features)
+        .join("path")
+        .attr("class","park")
+        .attr("d", path);
+        
+        var size = 10;
+
+        map.append("circle").attr("cx", 15).attr("cy",10).attr("r", 5.5).style("fill", "gray");
+        map.append("text")
+           .attr("x", 26)
+           .attr("y", 11)
+           .attr("font-weight", 700)
+           .text("San Francisco Park")
+           .style("font-size", "12px")
+           .attr("alignment-baseline","middle")
+           .style("fill", "gray");
+
+        map.selectAll("squares")
+          .data(keys)
+          .enter()
+          .append("rect")
+            .attr("x", 10)
+            .attr("y", function(d,i){ return 30 + i*(size+12)})
+            .attr("width", size)
+            .attr("height", size)
+            .style("fill", function(d){ return colorScale(d)})
+
+        map.selectAll("legend_names")
+          .data(keys)
+          .enter()
+          .append("text")
+            .attr("x", 15 + size* 1.2)
+            .attr("y", function(d,i){ return 30 + i*(size+12) + (size/2)})
+            .style("fill", d => colorScale(d) )
+            .text(function(d){ return d })
+            .attr("text-anchor", "left")
+            .style("alignment-baseline", "middle")
+            .style("font-size", "12px");
+
+        //////////////////////////////////// Moving on to bar plot
+
+        var counts = [
+          {"name": "Lophostemon confertus :: Brisbane Box", 
+          "private": 0,
+          "dpw": 0},
+          {"name": "Tristaniopsis laurina :: Swamp Myrtle",
+            "private": 0,
+            "dpw": 0},
+          {"name": "Arbutus 'Marina' :: Hybrid Strawberry Tree", 
+            "private": 0,
+            "dpw": 0},
+          {"name": "Magnolia grandiflora :: Southern Magnolia", 
+            "private": 0,
+            "dpw": 0}
+        ]
+
+        trees_filtered.forEach(d => {
+          if (d["qSpecies"] === keys[0]) {
+            if (d["qCaretaker"] === "Private") {
+              counts[0].private += 1;
+            }
+            if (d["qCaretaker"] === "DPW") {
+              counts[0].dpw += 1;
+            }
+          }
+          if (d["qSpecies"] === keys[1]) {
+            if (d["qCaretaker"] === "Private") {
+              counts[1].private += 1;
+            }
+            if (d["qCaretaker"] === "DPW") {
+              counts[1].dpw += 1;
+            }
+          }
+          if (d["qSpecies"] === keys[2]) {
+            if (d["qCaretaker"] === "Private") {
+              counts[2].private += 1;
+            }
+            if (d["qCaretaker"] === "DPW") {
+              counts[2].dpw += 1;
+            }
+          }
+          if (d["qSpecies"] === keys[3]) {
+            if (d["qCaretaker"] === "Private") {
+              counts[3].private += 1;
+            }
+            if (d["qCaretaker"] === "DPW") {
+              counts[3].dpw += 1;
+            }
+          }
+        });
+
+        console.log(counts);
+
+        let svg2 = d3.select("#barchart");
+        const width2 = svg2.attr("width");
+        const height2 = svg2.attr("height");
+        const margin2 = { top: 10, right: 60, bottom: 20, left:60};
+        const chartWidth = width2 - margin2.left - margin2.right;
+        const chartHeight = height2 - margin2.top - margin2.bottom;
+
+        svg2.append("text")
+            .attr("x", margin2.left + 100)
+            .attr("y", margin2.top + 10 )
+            .text("Number of DPW vs. Private Owned Trees by Species")
+            .style("font-size", "12px")
+            .style("font-weight", "700");
+  
+      
+        let annotations = svg2.append("g")
+                      .attr("transform","translate("+margin2.left+","+margin2.top+")");
+
+        let maxTrees = d3.max( counts, d => Math.max( d.dpw, d.private ) );
+
+        let xScale = d3.scaleLinear()
+                     .domain([0,maxTrees])
+                     .range([0, chartWidth - 80]); 
+         
+
+        const species = d3.map(counts, d => d.name.split(':: ')[1]);
+
+        const speciesScale = d3.scaleBand().domain(species).range([chartHeight - 30, 10]);
+        const subGroups = ["private", "dpw"];
+        var ySubgroup = d3.scaleBand()
+                          .domain(subGroups)
+                          .range([0, speciesScale.bandwidth()])
+                          .padding([0.05]);
+
+        let leftAxis = d3.axisLeft(speciesScale);
+        annotations.append('g')
+                .attr('transform', `translate(${margin2.left},${margin2.top})`)
+                .call(leftAxis);
+
+        let bottomAxis = d3.axisBottom(xScale).ticks(6); 
+        annotations.append('g')
+                    .attr('class', 'x axis')
+                    .attr('transform',`translate(${margin2.left},${chartHeight - margin2.top})`)
+                    .call(bottomAxis);
+
+        let chartArea = svg2.append("g").attr("id","points")
+                            .attr("transform",`translate(${margin2.left+61},${margin2.top + 10})`);
+
+        
+        let color = d3.scaleOrdinal().range([d3.schemeDark2[0], d3.schemeDark2[2]]);
+
+        chartArea.append("g")
+                .selectAll("g")
+                .data(counts)
+                .join("g")
+                  .attr("transform", d => `translate(0, ${speciesScale(d.name.split(':: ')[1])})`)
+                .selectAll("rect")
+                .data(d => subGroups.map(key => ({key, value: d[key]})))
+                .join("rect")
+                  .attr("x", d => xScale(0))
+                  .attr("y", d => ySubgroup(d.key))
+                  .attr("height", ySubgroup.bandwidth())
+                  .attr("width", d => xScale(d.value) - xScale(0))
+                  .attr("fill", d => color(d.key));
+
+          chartArea.selectAll("squares")
+                  .data(subGroups)
+                  .enter()
+                  .append("rect")
+                    .attr("x", chartWidth/2 + 75)
+                    .attr("y", function(d,i){ return 100 + i*(size+12)})
+                    .attr("width", size)
+                    .attr("height", size)
+                    .style("fill", function(d){ return color(d)})
+
+        chartArea.selectAll("legend_names")
+                .data(subGroups)
+                .enter()
+                .append("text")
+                  .attr("x", chartWidth/2 + 90)
+                  .attr("y", function(d,i){ return 100 + i*(size+12) + (size/2)})
+                  .style("fill", d => color(d) )
+                  .text(function(d){ return d })
+                  .attr("text-anchor", "left")
+                  .style("alignment-baseline", "middle")
+                  .style("font-size", "12px");
+        
+      }
+        requestData();
+
+    </script>
+      
+    
+   
+    
+     
+    
+  
+</body>
+</html>
